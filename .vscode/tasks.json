@@ -1,0 +1,36 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "C/C++: g++.exe build active file",
+      "type": "shell",
+      "command": "C:\\mingw64\\bin\\g++.exe",
+      "args": [
+        "-fdiagnostics-color=always",
+        "-g",
+        "${file}",
+        "-o",
+        "${fileDirname}\\${fileBasenameNoExtension}.exe",
+        "-I",
+        "C:\\portaudio\\include",
+        "-I",
+        "C:\\boost\\include\\boost-1_87",
+        "-I",
+        "C:\\libsndfile\\include",
+        "-L",
+        "C:\\portaudio\\build2",
+        "-L",
+        "C:\\libsndfile\\lib",
+        "-lportaudio",
+        "-lsndfile",
+        "-lws2_32"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$gcc"],
+      "detail": "Generated task by Debugger."
+    }
+  ]
+}

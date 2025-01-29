@@ -10,6 +10,8 @@
 #include <condition_variable>
 #include <vector>
 #include "sndfile.h"  // Changed to use quotes
+#include <filesystem>
+#include <atomic>
 
 // Configuration parameters
 float AOA_Warning_Start, AOA_Warning_End, Stall_warning;
@@ -34,11 +36,62 @@ int Stall_warning_sampleRate, Stall_warning_channels;
 // Forward declaration of calculateVolume function
 float calculateVolume(float AoA, float start, float end, float start_volume, float end_volume);
 
-// Function to read configuration file
-void readConfig() {
-    std::ifstream config("configuration.cfg");
+// Add these global variables after the existing globals
+std::atomic<bool> shouldStop{false};
+std::string currentConfigPath;
+std::filesystem::file_time_type lastConfigModTime;
+std::string currentAirframe;  // Add this line after other global declarations
+
+// Function to copy default config to new airframe config
+bool createAirframeConfig(const std::string& airframeName) {
+    std::string defaultPath = "configuration/default.cfg";
+    std::string airframePath = "configuration/" + airframeName + ".cfg";
+    
+    std::ifstream src(defaultPath, std::ios::binary);
+    if (!src.is_open()) {
+        std::cerr << "Failed to open default configuration file." << std::endl;
+        return false;
+    }
+    
+    std::ofstream dst(airframePath, std::ios::binary);
+    if (!dst.is_open()) {
+        std::cerr << "Failed to create airframe configuration file." << std::endl;
+        return false;
+    }
+    
+    dst << src.rdbuf();
+    std::cout << "Created new configuration file for " << airframeName << std::endl;
+    return true;
+}
+
+// Modified readConfig function to handle airframe-specific configs
+void readConfig(const std::string& airframeName = "") {
+    if (airframeName.empty()) {
+        currentConfigPath = "configuration/default.cfg";
+    } else {
+        currentConfigPath = "configuration/" + airframeName + ".cfg";
+        std::ifstream test(currentConfigPath);
+        if (!test.is_open()) {
+            std::cout << "No configuration found for " << airframeName << ", creating new config..." << std::endl;
+            if (createAirframeConfig(airframeName)) {
+                std::cout << "Successfully created configuration for " << airframeName << std::endl;
+            } else {
+                std::cout << "Failed to create airframe config, using default.cfg" << std::endl;
+                currentConfigPath = "configuration/default.cfg";
+            }
+        }
+    }
+    
+    // Update last modification time
+    try {
+        lastConfigModTime = std::filesystem::last_write_time(currentConfigPath);
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "Error getting file modification time: " << e.what() << std::endl;
+    }
+
+    std::ifstream config(currentConfigPath);
     if (!config.is_open()) {
-        std::cerr << "Failed to open configuration file." << std::endl;
+        std::cerr << "Failed to open configuration file: " << currentConfigPath << std::endl;
         exit(1);
     }
     std::string line;
@@ -182,23 +235,51 @@ void applyLimiter(std::vector<float>& buffer, float threshold) {
 
 // Function to preprocess audio data
 void preprocessAudioData(const std::string& file, float volume, int balance, std::vector<float>& buffer, int& sampleRate, int& channels) {
-    std::string filePath = "audio/" + file; // Correct the path construction
+    std::string filePath = "audio/" + file;
+    std::cout << "Loading audio file: " << filePath << std::endl;
+    
+    // Clear the buffer before loading new data
+    buffer.clear();
+    
     if (!loadAudioData(filePath, buffer, sampleRate, channels)) {
         std::cerr << "Failed to load audio data: " << filePath << std::endl;
         return;
     }
 
+    std::cout << "Successfully loaded audio file: " << filePath << std::endl;
+    std::cout << "Initial buffer size: " << buffer.size() << ", channels: " << channels << std::endl;
+
+    if (buffer.empty()) {
+        std::cerr << "Error: Buffer is empty after loading" << std::endl;
+        return;
+    }
+
     float leftVolume = volume * (1.0f - balance / 100.0f);
     float rightVolume = volume * (1.0f + balance / 100.0f);
-    for (size_t i = 0; i < buffer.size(); i += channels) {
-        buffer[i] *= leftVolume / 100.0f;
+
+    std::cout << "Applying volume adjustments - Left: " << leftVolume << ", Right: " << rightVolume << std::endl;
+
+    // Create a temporary buffer for the processed audio
+    std::vector<float> processedBuffer = buffer;
+
+    for (size_t i = 0; i < processedBuffer.size(); i += channels) {
+        processedBuffer[i] *= leftVolume / 100.0f;
         if (channels > 1) {
-            buffer[i + 1] *= rightVolume / 100.0f;
+            processedBuffer[i + 1] *= rightVolume / 100.0f;
         }
     }
 
     // Apply limiter to the audio signal
-    applyLimiter(buffer, 0.9f); // Set threshold to 0.9 to prevent clipping
+    applyLimiter(processedBuffer, 0.9f);
+
+    // Only update the buffer if processing was successful
+    buffer = std::move(processedBuffer);
+
+    std::cout << "Final buffer size: " << buffer.size() 
+              << ", First few samples: " << buffer[0];
+    if (buffer.size() > 1) std::cout << ", " << buffer[1];
+    if (buffer.size() > 2) std::cout << ", " << buffer[2];
+    std::cout << std::endl;
 }
 
 // Add global variables for volume scaling
@@ -389,6 +470,36 @@ void soundPlaybackThread() {
     }
 }
 
+// Add this function before main()
+void monitorConfigFile() {
+    using namespace std::chrono_literals;
+    
+    while (!shouldStop) {
+        try {
+            auto currentModTime = std::filesystem::last_write_time(currentConfigPath);
+            if (currentModTime != lastConfigModTime) {
+                std::cout << "Configuration file changed, reloading settings..." << std::endl;
+                readConfig(currentAirframe);  // Use currentAirframe instead of currentConfigPath
+                lastConfigModTime = currentModTime;
+                
+                // Reload audio buffers with new settings
+                preprocessAudioData(AOA_warning_audio_file, AOA_warning_start_volume, 
+                                 AOA_warning_balance, AOA_warning_buffer, 
+                                 AOA_warning_sampleRate, AOA_warning_channels);
+                                 
+                preprocessAudioData(Stall_warning_audio_file, Stall_warning_volume, 
+                                 Stall_warning_balance, Stall_warning_buffer,
+                                 Stall_warning_sampleRate, Stall_warning_channels);
+            }
+        } catch (const std::filesystem::filesystem_error& e) {
+            std::cerr << "Error monitoring config file: " << e.what() << std::endl;
+        }
+        
+        // Sleep for 5 seconds before next check
+        std::this_thread::sleep_for(5s);
+    }
+}
+
 int main() {
     std::cout << "Starting program..." << std::endl;
 
@@ -414,9 +525,26 @@ int main() {
     std::cout << "Using WASAPI device indices: AOA=" << AOA_warning_device_index 
               << ", Stall=" << Stall_warning_device_index << std::endl;
 
-    // Preprocess audio data
-    preprocessAudioData(AOA_warning_audio_file, AOA_warning_start_volume, AOA_warning_balance, AOA_warning_buffer, AOA_warning_sampleRate, AOA_warning_channels);
-    preprocessAudioData(Stall_warning_audio_file, Stall_warning_volume, Stall_warning_balance, Stall_warning_buffer, Stall_warning_sampleRate, Stall_warning_channels);
+    // Preprocess audio data with additional error checking
+    std::cout << "\nPreprocessing AOA warning audio..." << std::endl;
+    preprocessAudioData(AOA_warning_audio_file, AOA_warning_start_volume, 
+                       AOA_warning_balance, AOA_warning_buffer, 
+                       AOA_warning_sampleRate, AOA_warning_channels);
+    
+    if (AOA_warning_buffer.empty()) {
+        std::cerr << "Error: AOA warning buffer is empty after preprocessing" << std::endl;
+        return 1;
+    }
+
+    std::cout << "\nPreprocessing Stall warning audio..." << std::endl;
+    preprocessAudioData(Stall_warning_audio_file, Stall_warning_volume, 
+                       Stall_warning_balance, Stall_warning_buffer,
+                       Stall_warning_sampleRate, Stall_warning_channels);
+    
+    if (Stall_warning_buffer.empty()) {
+        std::cerr << "Error: Stall warning buffer is empty after preprocessing" << std::endl;
+        return 1;
+    }
 
     // Analyze both audio files and calculate safe scaling factors
     std::cout << "\nAnalyzing warning sound levels..." << std::endl;
@@ -437,6 +565,10 @@ int main() {
     // Start sound playback thread
     std::thread playbackThread(soundPlaybackThread);
     playbackThread.detach();
+
+    // Start configuration file monitoring thread
+    std::thread configMonitor(monitorConfigFile);
+    configMonitor.detach();
 
     boost::asio::io_context io_context;
     boost::asio::ip::udp::socket socket(io_context);
@@ -469,8 +601,38 @@ int main() {
         if (len > 0) {
             std::string data(recv_buf, len);
             float IAS, AoA;
-            sscanf(data.c_str(), "%f,%f", &IAS, &AoA);
-            std::cout << "Received data: IAS=" << IAS << ", AoA=" << AoA << std::endl;
+            char airframe[256];
+            sscanf(data.c_str(), "%f,%f,%255s", &IAS, &AoA, airframe);
+            std::cout << "Received data: IAS=" << IAS << ", AoA=" << AoA << ", Airframe=" << airframe << std::endl;
+
+            // Reload configuration if airframe changes
+            if (currentAirframe != airframe) {
+                std::cout << "Airframe changed from '" << currentAirframe << "' to '" << airframe << "'" << std::endl;
+                currentAirframe = airframe;
+                readConfig(currentAirframe);
+
+                // Reload audio buffers with new configuration
+                std::cout << "Reloading audio buffers for new airframe..." << std::endl;
+                
+                // Clear existing buffers
+                AOA_warning_buffer.clear();
+                Stall_warning_buffer.clear();
+                
+                // Preprocess audio data with the new configuration
+                preprocessAudioData(AOA_warning_audio_file, AOA_warning_start_volume, 
+                                 AOA_warning_balance, AOA_warning_buffer, 
+                                 AOA_warning_sampleRate, AOA_warning_channels);
+                
+                preprocessAudioData(Stall_warning_audio_file, Stall_warning_volume, 
+                                 Stall_warning_balance, Stall_warning_buffer,
+                                 Stall_warning_sampleRate, Stall_warning_channels);
+                
+                // Recalculate scaling factors
+                aoa_warning_scaling = analyzeAudioLevels(AOA_warning_buffer, "AOA Warning");
+                stall_warning_scaling = analyzeAudioLevels(Stall_warning_buffer, "Stall Warning");
+                
+                std::cout << "Audio buffers reloaded for " << currentAirframe << std::endl;
+            }
 
             {
                 std::lock_guard<std::mutex> lock(queueMutex);
@@ -500,5 +662,9 @@ int main() {
     }
 
     std::cout << "Program exiting..." << std::endl;
+
+    // When exiting, stop the monitoring thread
+    shouldStop = true;
+
     return 0;
 }
