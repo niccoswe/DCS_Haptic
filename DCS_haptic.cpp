@@ -42,6 +42,9 @@ std::string currentConfigPath;
 std::filesystem::file_time_type lastConfigModTime;
 std::string currentAirframe;  // Add this line after other global declarations
 
+// Add these declarations after other global variables
+std::string AOA_warning_device_name, Stall_warning_device_name;
+
 // Function to copy default config to new airframe config
 bool createAirframeConfig(const std::string& airframeName) {
     std::string defaultPath = "configuration/default.cfg";
@@ -62,6 +65,58 @@ bool createAirframeConfig(const std::string& airframeName) {
     dst << src.rdbuf();
     std::cout << "Created new configuration file for " << airframeName << std::endl;
     return true;
+}
+
+// Add this new function before readConfig()
+std::string findAndUpdateDeviceName(int deviceIndex, const std::string& configPath) {
+    const PaDeviceInfo* deviceInfo = Pa_GetDeviceInfo(deviceIndex);
+    if (!deviceInfo) {
+        std::cerr << "Invalid device index: " << deviceIndex << std::endl;
+        return "";
+    }
+
+    std::string deviceName = deviceInfo->name;
+    
+    // Update the config file to store the device name
+    std::ifstream inFile(configPath);
+    std::string content((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
+    inFile.close();
+
+    // Replace the device index with the device name in the config
+    size_t pos;
+    std::string indexStr = std::to_string(deviceIndex);
+    
+    // Update AOA warning device
+    std::string searchStr = "AOA_warning_device_index=" + indexStr;
+    if ((pos = content.find(searchStr)) != std::string::npos) {
+        content.replace(pos, searchStr.length(), "AOA_warning_device_name=" + deviceName);
+    }
+    
+    // Update Stall warning device
+    searchStr = "Stall_warning_device_index=" + indexStr;
+    if ((pos = content.find(searchStr)) != std::string::npos) {
+        content.replace(pos, searchStr.length(), "Stall_warning_device_name=" + deviceName);
+    }
+
+    std::ofstream outFile(configPath);
+    outFile << content;
+    outFile.close();
+
+    return deviceName;
+}
+
+// Add this new function before readConfig()
+int findDeviceByName(const std::string& deviceName) {
+    int numDevices = Pa_GetDeviceCount();
+    for (int i = 0; i < numDevices; ++i) {
+        const PaDeviceInfo* deviceInfo = Pa_GetDeviceInfo(i);
+        if (deviceInfo && deviceInfo->maxOutputChannels > 0) {
+            if (std::string(deviceInfo->name) == deviceName) {
+                return i;
+            }
+        }
+    }
+    return -1;
 }
 
 // Modified readConfig function to handle airframe-specific configs
@@ -131,9 +186,29 @@ void readConfig(const std::string& airframeName = "") {
                 else if (key == "Stall_warning_volume") Stall_warning_volume = std::stof(value);
                 else if (key == "AOA_warning_audio_file") AOA_warning_audio_file = value;
                 else if (key == "Stall_warning_audio_file") Stall_warning_audio_file = value;
-                else if (key == "AOA_warning_device_index") AOA_warning_device_index = std::stoi(value);
+                else if (key == "AOA_warning_device_index") {
+                    AOA_warning_device_index = std::stoi(value);
+                    AOA_warning_device_name = findAndUpdateDeviceName(AOA_warning_device_index, currentConfigPath);
+                }
+                else if (key == "AOA_warning_device_name") {
+                    AOA_warning_device_name = value;
+                    int deviceIndex = findDeviceByName(value);
+                    if (deviceIndex >= 0) {
+                        AOA_warning_device_index = deviceIndex;
+                    }
+                }
                 else if (key == "AOA_warning_balance") AOA_warning_balance = std::stoi(value);
-                else if (key == "Stall_warning_device_index") Stall_warning_device_index = std::stoi(value);
+                else if (key == "Stall_warning_device_index") {
+                    Stall_warning_device_index = std::stoi(value);
+                    Stall_warning_device_name = findAndUpdateDeviceName(Stall_warning_device_index, currentConfigPath);
+                }
+                else if (key == "Stall_warning_device_name") {
+                    Stall_warning_device_name = value;
+                    int deviceIndex = findDeviceByName(value);
+                    if (deviceIndex >= 0) {
+                        Stall_warning_device_index = deviceIndex;
+                    }
+                }
                 else if (key == "Stall_warning_balance") Stall_warning_balance = std::stoi(value);
             }
         }
@@ -152,6 +227,12 @@ void readConfig(const std::string& airframeName = "") {
     std::cout << "AOA_warning_balance: " << AOA_warning_balance << std::endl;
     std::cout << "Stall_warning_device_index: " << Stall_warning_device_index << std::endl;
     std::cout << "Stall_warning_balance: " << Stall_warning_balance << std::endl;
+
+    // Add device name logging
+    std::cout << "AOA Warning Device: " << AOA_warning_device_name 
+              << " (index: " << AOA_warning_device_index << ")" << std::endl;
+    std::cout << "Stall Warning Device: " << Stall_warning_device_name 
+              << " (index: " << Stall_warning_device_index << ")" << std::endl;
 }
 
 // Function to list all available audio devices and their indices
@@ -298,7 +379,7 @@ float analyzeAudioLevels(const std::vector<float>& buffer, const std::string& wa
     
     // Calculate scaling factor needed to prevent clipping at max volume
     float maxDesiredPeak = 0.7f; // Leave some headroom
-    float safeScaling = (maxPeak > 0.0f) ? maxDesiredPeak / maxPeak : 1.0f;
+    float safeScaling = (maxPeak > 0.0f) ? std::min(maxDesiredPeak / maxPeak, 1.0f) : 1.0f;
     
     std::cout << warningType << " audio analysis - Max peak: " << maxPeak 
               << ", Safe scaling factor: " << safeScaling << std::endl;
