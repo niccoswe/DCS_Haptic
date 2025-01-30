@@ -14,6 +14,7 @@ Customizable Audio
 Audio files are located in the "audio" folder. You can use custom sounds by adding them to the audio folder and modifying the configuration file accordingly.
 
 Module-Specific Configuration
+
 The first time you fly a new module, a configuration file named after the airframe is created in the "configuration" folder. Initial settings are based on "default.cfg", so customize this file to your preferences first.
 
 DCS Integration
