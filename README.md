@@ -8,7 +8,7 @@ The audio files used are also customizable and can be found in the audio folder.
 The first time you fly a module, a new configuration file is created in the configuration folder. The new configuration file will carry the same name as the respective airframe. 
 All settings when it creates a new configuration file is based on default.cfg, so first of you should set this to your likings. 
 
-To get DCS to send the telemetric data you need to add the content in scripts/export.lua. Open this file found in the zip file in the relase, and copy the content of 
+To get DCS to send the telemetric data you need to add the content of scripts/export.lua. Open this file found in the zip file in the relase, and copy the content of 
 that file and paste it in the end of your "Saved Games/DCS.../Scripts/export.lua". 
 The copy the scripts/AOAHaptic.lua to the "Saved Games/DCS.../Scripts/" folder. 
 
