@@ -67,7 +67,13 @@ bool createAirframeConfig(const std::string& airframeName) {
     return true;
 }
 
-// Add this new function before readConfig()
+// Add this new helper function
+bool isNumeric(const std::string& str) {
+    return !str.empty() && 
+           str.find_first_not_of("0123456789") == std::string::npos;
+}
+
+// Replace the existing findAndUpdateDeviceName function
 std::string findAndUpdateDeviceName(int deviceIndex, const std::string& configPath) {
     const PaDeviceInfo* deviceInfo = Pa_GetDeviceInfo(deviceIndex);
     if (!deviceInfo) {
@@ -77,30 +83,72 @@ std::string findAndUpdateDeviceName(int deviceIndex, const std::string& configPa
 
     std::string deviceName = deviceInfo->name;
     
-    // Update the config file to store the device name
+    // Read the entire config file
     std::ifstream inFile(configPath);
-    std::string content((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
+    if (!inFile.is_open()) {
+        std::cerr << "Failed to open config file for updating device name" << std::endl;
+        return deviceName;
+    }
+    
+    std::vector<std::string> lines;
+    std::string line;
+    bool needsUpdate = false;
+    
+    while (std::getline(inFile, line)) {
+        std::string originalLine = line;
+        std::string processedLine = line;
+        
+        // Remove comments
+        size_t commentPos = processedLine.find("//");
+        std::string comment;
+        if (commentPos != std::string::npos) {
+            comment = processedLine.substr(commentPos);
+            processedLine = processedLine.substr(0, commentPos);
+        }
+        
+        // Find key-value pairs
+        size_t equalsPos = processedLine.find('=');
+        if (equalsPos != std::string::npos) {
+            std::string key = processedLine.substr(0, equalsPos);
+            std::string value = processedLine.substr(equalsPos + 1);
+            
+            // Trim whitespace
+            key.erase(0, key.find_first_not_of(" \t"));
+            key.erase(key.find_last_not_of(" \t") + 1);
+            value.erase(0, value.find_first_not_of(" \t"));
+            value.erase(value.find_last_not_of(" \t") + 1);
+            
+            // Check if this is a numeric device specification that needs updating
+            if ((key.find("device_index") != std::string::npos || 
+                 key.find("device_name") != std::string::npos) && 
+                isNumeric(value) && std::stoi(value) == deviceIndex) {
+                
+                std::string newKey = key;
+                if (key.find("index") != std::string::npos) {
+                    newKey = key.replace(key.find("index"), 5, "name");
+                }
+                originalLine = newKey + "=" + deviceName + (comment.empty() ? "" : " " + comment);
+                needsUpdate = true;
+            }
+        }
+        lines.push_back(originalLine);
+    }
     inFile.close();
-
-    // Replace the device index with the device name in the config
-    size_t pos;
-    std::string indexStr = std::to_string(deviceIndex);
     
-    // Update AOA warning device
-    std::string searchStr = "AOA_warning_device_index=" + indexStr;
-    if ((pos = content.find(searchStr)) != std::string::npos) {
-        content.replace(pos, searchStr.length(), "AOA_warning_device_name=" + deviceName);
+    // Only write back if we made changes
+    if (needsUpdate) {
+        std::ofstream outFile(configPath);
+        if (!outFile.is_open()) {
+            std::cerr << "Failed to open config file for writing updated device name" << std::endl;
+            return deviceName;
+        }
+        for (const auto& l : lines) {
+            outFile << l << std::endl;
+        }
+        outFile.close();
+        std::cout << "Updated config file: converted device index " << deviceIndex 
+                  << " to name '" << deviceName << "'" << std::endl;
     }
-    
-    // Update Stall warning device
-    searchStr = "Stall_warning_device_index=" + indexStr;
-    if ((pos = content.find(searchStr)) != std::string::npos) {
-        content.replace(pos, searchStr.length(), "Stall_warning_device_name=" + deviceName);
-    }
-
-    std::ofstream outFile(configPath);
-    outFile << content;
-    outFile.close();
 
     return deviceName;
 }
@@ -233,6 +281,23 @@ void readConfig(const std::string& airframeName = "") {
                 key.erase(key.find_last_not_of(" \t") + 1);
                 value.erase(0, value.find_first_not_of(" \t"));
                 value.erase(value.find_last_not_of(" \t") + 1);
+                
+                // Check if value is a device index
+                if ((key == "AOA_warning_device_index" || key == "AOA_warning_device_name" || 
+                     key == "Stall_warning_device_index" || key == "Stall_warning_device_name") && 
+                    isNumeric(value)) {
+                    int deviceIndex = std::stoi(value);
+                    std::string deviceName = findAndUpdateDeviceName(deviceIndex, currentConfigPath);
+                    
+                    if (key.find("AOA") != std::string::npos) {
+                        AOA_warning_device_index = deviceIndex;
+                        AOA_warning_device_name = deviceName;
+                    } else {
+                        Stall_warning_device_index = deviceIndex;
+                        Stall_warning_device_name = deviceName;
+                    }
+                    continue;
+                }
                 
                 if (key == "AOA_Warning_Start") AOA_Warning_Start = std::stof(value);
                 else if (key == "AOA_Warning_End") AOA_Warning_End = std::stof(value);
