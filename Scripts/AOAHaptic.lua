@@ -35,9 +35,10 @@ function LuaExportActivityNextEvent(t)
     -- Your telemetry export code
     local IAS = LoGetIndicatedAirSpeed()
     local AoA = LoGetAngleOfAttack()
-    local airframe = LoGetSelfData().Name  -- Get the name of the airframe
+    local selfData = LoGetSelfData()
+    local airframe = selfData and selfData.Name or ""  -- Add nil check for selfData
 
-    if IAS and AoA and airframe then
+    if IAS and AoA and airframe ~= "" then  -- Only send if we have valid data
         local data = string.format("%.2f,%.2f,%s", IAS, AoA, airframe)
         udp:send(data)
     end
