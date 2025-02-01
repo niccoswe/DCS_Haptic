@@ -44,7 +44,7 @@ function LuaExportActivityNextEvent(t)
     end
 
     -- Return the next call time (use the original if available, otherwise schedule for 1 second later)
-    return tNext or (t + 1.0)
+    return tNext or (t + 0.5)
 end
 
 -- END Export telemetry to own haptic app
