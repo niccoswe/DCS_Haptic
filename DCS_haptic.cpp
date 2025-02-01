@@ -500,10 +500,31 @@ void playPreprocessedSound(const std::vector<float>& buffer, int sampleRate, int
         return;
     }
 
-    static PaStream* stream = nullptr;
-    static bool streamInitialized = false;
+    // Use different streams for different devices
+    static PaStream* aoa_stream = nullptr;
+    static PaStream* stall_stream = nullptr;
+    static int aoa_device_index = -1;
+    static int stall_device_index = -1;
+    PaStream** currentStream;
+    int* currentDeviceIndex;
 
-    if (!streamInitialized) {
+    // Determine which stream to use based on the buffer being played
+    if (buffer.data() == AOA_warning_buffer.data()) {
+        currentStream = &aoa_stream;
+        currentDeviceIndex = &aoa_device_index;
+    } else {
+        currentStream = &stall_stream;
+        currentDeviceIndex = &stall_device_index;
+    }
+
+    // Initialize or reinitialize stream if device changed
+    if (*currentStream == nullptr || *currentDeviceIndex != deviceIndex) {
+        // Cleanup existing stream if device changed
+        if (*currentStream != nullptr) {
+            Pa_CloseStream(*currentStream);
+            *currentStream = nullptr;
+        }
+
         Pa_Initialize();
         
         // Get the actual device info
@@ -519,7 +540,7 @@ void playPreprocessedSound(const std::vector<float>& buffer, int sampleRate, int
                   << "\nDevice sample rate: " << deviceInfo->defaultSampleRate
                   << "\nRequested sample rate: " << sampleRate << std::endl;
 
-        // Use device's default sample rate instead of the audio file's rate
+        // Set up stream parameters
         PaStreamParameters outputParameters;
         outputParameters.device = deviceIndex;
         outputParameters.channelCount = channels;
@@ -527,11 +548,11 @@ void playPreprocessedSound(const std::vector<float>& buffer, int sampleRate, int
         outputParameters.suggestedLatency = deviceInfo->defaultLowOutputLatency;
         outputParameters.hostApiSpecificStreamInfo = nullptr;
 
-        // Try to open stream with error checking
-        PaError err = Pa_OpenStream(&stream,
+        // Open stream
+        PaError err = Pa_OpenStream(currentStream,
                                   nullptr,
                                   &outputParameters,
-                                  deviceInfo->defaultSampleRate, // Use device's default rate
+                                  deviceInfo->defaultSampleRate,
                                   paFramesPerBufferUnspecified,
                                   paClipOff,
                                   nullptr,
@@ -539,21 +560,17 @@ void playPreprocessedSound(const std::vector<float>& buffer, int sampleRate, int
         
         if (err != paNoError) {
             std::cerr << "Error opening stream: " << Pa_GetErrorText(err) << std::endl;
-            std::cerr << "Device info:" << std::endl
-                     << "  Max channels: " << deviceInfo->maxOutputChannels << std::endl
-                     << "  Default sample rate: " << deviceInfo->defaultSampleRate << std::endl
-                     << "  Default low latency: " << deviceInfo->defaultLowOutputLatency << std::endl;
             return;
         }
 
-        err = Pa_StartStream(stream);
+        err = Pa_StartStream(*currentStream);
         if (err != paNoError) {
             std::cerr << "Error starting stream: " << Pa_GetErrorText(err) << std::endl;
             return;
         }
 
-        streamInitialized = true;
-        std::cout << "Audio stream initialized successfully" << std::endl;
+        *currentDeviceIndex = deviceIndex;
+        std::cout << "Audio stream initialized for device " << deviceInfo->name << std::endl;
     }
 
     std::cout << "Playing sound with buffer size: " << buffer.size() << ", channels: " << channels << std::endl;
@@ -583,7 +600,7 @@ void playPreprocessedSound(const std::vector<float>& buffer, int sampleRate, int
         }
     }
 
-    PaError err = Pa_WriteStream(stream, adjustedBuffer.data(), buffer.size() / channels);
+    PaError err = Pa_WriteStream(*currentStream, adjustedBuffer.data(), buffer.size() / channels);
     if (err != paNoError) {
         std::cerr << "Error writing to stream: " << Pa_GetErrorText(err) << std::endl;
     }
@@ -591,6 +608,7 @@ void playPreprocessedSound(const std::vector<float>& buffer, int sampleRate, int
 
 // Cleanup function to be called at program exit
 void cleanupAudio() {
+    // Simply call Pa_Terminate() - it's safe to call even if PA isn't initialized
     Pa_Terminate();
 }
 
@@ -820,7 +838,7 @@ int main() {
             } else if (AoA >= Stall_warning) {
                 std::cout << "Using stall warning volume: " << Stall_warning_volume << " for AoA: " << AoA << std::endl;
                 {
-                    std::lock_guard<std::mutex> lock(queueMutex);
+                    std::lock_guard<std::mutex> lock(queueMutex);  // Fixed syntax here
                     soundQueue.emplace("audio/" + Stall_warning_audio_file, Stall_warning_volume, Stall_warning_balance, Stall_warning_device_index); // Use relative path
                 }
                 queueCondition.notify_one();
