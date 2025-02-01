@@ -356,13 +356,12 @@ void readConfig(const std::string& airframeName = "") {
               << " (index: " << Stall_warning_device_index << ")" << std::endl;
 }
 
-// Modify listAudioDevices() to show WASAPI indices
+// Modify listAudioDevices() to show only system indices
 void listAudioDevices() {
     Pa_Initialize();
     int numDevices = Pa_GetDeviceCount();
     const PaDeviceInfo* deviceInfo;
     const PaHostApiInfo* hostApiInfo;
-    int wasapiCount = 0;
     
     std::cout << "\nAvailable WASAPI output devices:" << std::endl;
     std::cout << "--------------------------------" << std::endl;
@@ -372,16 +371,15 @@ void listAudioDevices() {
         if (deviceInfo->maxOutputChannels > 0) {
             hostApiInfo = Pa_GetHostApiInfo(deviceInfo->hostApi);
             if (std::string(hostApiInfo->name).find("WASAPI") != std::string::npos) {
-                std::cout << "  WASAPI[" << wasapiCount << "] System[" << i << "] " 
+                std::cout << "  [" << i << "] " 
                          << deviceInfo->name 
                          << " - Channels: " << deviceInfo->maxOutputChannels
                          << std::endl;
-                wasapiCount++;
             }
         }
     }
     
-    std::cout << "\nNote: Use the WASAPI[n] index in your config file\n" << std::endl;
+    std::cout << "\nNote: Use the device number shown in [n] in your config file\n" << std::endl;
     
     Pa_Terminate();
 }
