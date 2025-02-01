@@ -105,17 +105,73 @@ std::string findAndUpdateDeviceName(int deviceIndex, const std::string& configPa
     return deviceName;
 }
 
-// Add this new function before readConfig()
-int findDeviceByName(const std::string& deviceName) {
+// Add this new function before findDeviceByName()
+int getWasapiDeviceCount() {
     int numDevices = Pa_GetDeviceCount();
+    int wasapiCount = 0;
     for (int i = 0; i < numDevices; ++i) {
         const PaDeviceInfo* deviceInfo = Pa_GetDeviceInfo(i);
         if (deviceInfo && deviceInfo->maxOutputChannels > 0) {
-            if (std::string(deviceInfo->name) == deviceName) {
-                return i;
+            const PaHostApiInfo* hostApiInfo = Pa_GetHostApiInfo(deviceInfo->hostApi);
+            if (std::string(hostApiInfo->name).find("WASAPI") != std::string::npos) {
+                wasapiCount++;
             }
         }
     }
+    return wasapiCount;
+}
+
+// Replace existing findDeviceByName() with this version
+int findDeviceByName(const std::string& deviceName) {
+    int numDevices = Pa_GetDeviceCount();
+    // First try to find WASAPI device with this name
+    for (int i = 0; i < numDevices; ++i) {
+        const PaDeviceInfo* deviceInfo = Pa_GetDeviceInfo(i);
+        if (deviceInfo && deviceInfo->maxOutputChannels > 0) {
+            const PaHostApiInfo* hostApiInfo = Pa_GetHostApiInfo(deviceInfo->hostApi);
+            if (std::string(hostApiInfo->name).find("WASAPI") != std::string::npos) {
+                if (std::string(deviceInfo->name) == deviceName) {
+                    return i;
+                }
+            }
+        }
+    }
+    return -1;
+}
+
+// Replace existing findWasapiDevice() with this version
+int findWasapiDevice(int requestedIndex) {
+    int numDevices = Pa_GetDeviceCount();
+    int wasapiCount = 0;
+    
+    // First try to find the nth WASAPI device
+    for (int i = 0; i < numDevices; ++i) {
+        const PaDeviceInfo* deviceInfo = Pa_GetDeviceInfo(i);
+        const PaHostApiInfo* hostApiInfo = Pa_GetHostApiInfo(deviceInfo->hostApi);
+        
+        if (deviceInfo->maxOutputChannels > 0 && 
+            std::string(hostApiInfo->name).find("WASAPI") != std::string::npos) {
+            if (wasapiCount == requestedIndex) {
+                return i;
+            }
+            wasapiCount++;
+        }
+    }
+
+    // If requested index is too high, return the first WASAPI device
+    for (int i = 0; i < numDevices; ++i) {
+        const PaDeviceInfo* deviceInfo = Pa_GetDeviceInfo(i);
+        const PaHostApiInfo* hostApiInfo = Pa_GetHostApiInfo(deviceInfo->hostApi);
+        
+        if (deviceInfo->maxOutputChannels > 0 && 
+            std::string(hostApiInfo->name).find("WASAPI") != std::string::npos) {
+            std::cout << "Warning: Requested WASAPI device index " << requestedIndex 
+                     << " not found, using first available WASAPI device instead" << std::endl;
+            return i;
+        }
+    }
+
+    std::cerr << "Error: No WASAPI devices found" << std::endl;
     return -1;
 }
 
@@ -235,45 +291,32 @@ void readConfig(const std::string& airframeName = "") {
               << " (index: " << Stall_warning_device_index << ")" << std::endl;
 }
 
-// Function to list all available audio devices and their indices
+// Modify listAudioDevices() to show WASAPI indices
 void listAudioDevices() {
     Pa_Initialize();
     int numDevices = Pa_GetDeviceCount();
     const PaDeviceInfo* deviceInfo;
     const PaHostApiInfo* hostApiInfo;
+    int wasapiCount = 0;
     
-    std::cout << "\nAvailable output devices:" << std::endl;
-    std::cout << "------------------------" << std::endl;
+    std::cout << "\nAvailable WASAPI output devices:" << std::endl;
+    std::cout << "--------------------------------" << std::endl;
     
-    // First list WASAPI devices
-    std::cout << "WASAPI devices (recommended):" << std::endl;
     for (int i = 0; i < numDevices; ++i) {
         deviceInfo = Pa_GetDeviceInfo(i);
         if (deviceInfo->maxOutputChannels > 0) {
             hostApiInfo = Pa_GetHostApiInfo(deviceInfo->hostApi);
             if (std::string(hostApiInfo->name).find("WASAPI") != std::string::npos) {
-                std::cout << "  [" << i << "] " << deviceInfo->name 
+                std::cout << "  WASAPI[" << wasapiCount << "] System[" << i << "] " 
+                         << deviceInfo->name 
                          << " - Channels: " << deviceInfo->maxOutputChannels
                          << std::endl;
+                wasapiCount++;
             }
         }
     }
     
-    // Then list other devices
-    std::cout << "\nOther audio interfaces:" << std::endl;
-    for (int i = 0; i < numDevices; ++i) {
-        deviceInfo = Pa_GetDeviceInfo(i);
-        if (deviceInfo->maxOutputChannels > 0) {
-            hostApiInfo = Pa_GetHostApiInfo(deviceInfo->hostApi);
-            if (std::string(hostApiInfo->name).find("WASAPI") == std::string::npos) {
-                std::cout << "  [" << i << "] " << deviceInfo->name 
-                         << " (" << hostApiInfo->name << ")"
-                         << " - Channels: " << deviceInfo->maxOutputChannels
-                         << std::endl;
-            }
-        }
-    }
-    std::cout << "\nNote: WASAPI is recommended for Windows systems.\n" << std::endl;
+    std::cout << "\nNote: Use the WASAPI[n] index in your config file\n" << std::endl;
     
     Pa_Terminate();
 }
@@ -385,26 +428,6 @@ float analyzeAudioLevels(const std::vector<float>& buffer, const std::string& wa
               << ", Safe scaling factor: " << safeScaling << std::endl;
     
     return safeScaling;
-}
-
-// Function to find the correct WASAPI device index
-int findWasapiDevice(int requestedIndex) {
-    int numDevices = Pa_GetDeviceCount();
-    int wasapiCount = 0;
-    
-    for (int i = 0; i < numDevices; ++i) {
-        const PaDeviceInfo* deviceInfo = Pa_GetDeviceInfo(i);
-        const PaHostApiInfo* hostApiInfo = Pa_GetHostApiInfo(deviceInfo->hostApi);
-        
-        if (deviceInfo->maxOutputChannels > 0 && 
-            std::string(hostApiInfo->name).find("WASAPI") != std::string::npos) {
-            if (wasapiCount == requestedIndex) {
-                return i;
-            }
-            wasapiCount++;
-        }
-    }
-    return requestedIndex; // Fallback to original index if not found
 }
 
 // Function to play preprocessed sound with continuous playback
