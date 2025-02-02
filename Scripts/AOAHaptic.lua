@@ -12,14 +12,12 @@ local originalLuaExportActivityNextEvent = LuaExportActivityNextEvent
 -- Modify LuaExportStart
 function LuaExportStart()
     if originalLuaExportStart then originalLuaExportStart() end
-    -- Your initialization code
     udp:setpeername(host, port)
 end
 
 -- Modify LuaExportStop
 function LuaExportStop()
     if originalLuaExportStop then originalLuaExportStop() end
-    -- Your cleanup code
     udp:close()
 end
 
@@ -27,23 +25,20 @@ end
 function LuaExportActivityNextEvent(t)
     local tNext = t
     
-    -- Call the original function if it exists
     if originalLuaExportActivityNextEvent then 
         tNext = originalLuaExportActivityNextEvent(t)
     end
 
-    -- Your telemetry export code
     local IAS = LoGetIndicatedAirSpeed()
     local AoA = LoGetAngleOfAttack()
     local selfData = LoGetSelfData()
-    local airframe = selfData and selfData.Name or ""  -- Add nil check for selfData
+    local airframe = selfData and selfData.Name or ""
 
-    if IAS and AoA and airframe ~= "" then  -- Only send if we have valid data
+    if IAS and AoA and airframe ~= "" then
         local data = string.format("%.2f,%.2f,%s", IAS, AoA, airframe)
         udp:send(data)
     end
 
-    -- Return the next call time (use the original if available, otherwise schedule for 1 second later)
     return tNext or (t + 0.5)
 end
 

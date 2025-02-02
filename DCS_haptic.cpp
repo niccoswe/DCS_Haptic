@@ -788,7 +788,9 @@ int main() {
             float IAS, AoA;
             char airframe[256];
             sscanf(data.c_str(), "%f,%f,%255s", &IAS, &AoA, airframe);
-            std::cout << "Received data: IAS=" << IAS << ", AoA=" << AoA << ", Airframe=" << airframe << std::endl;
+            std::cout << "Received data: IAS=" << IAS << ", AoA=" << AoA 
+                      << ", Airframe=" << airframe 
+                      << ", Moving=" << (IAS >= 10.0f ? "yes" : "no") << std::endl;
 
             // Reload configuration if airframe changes
             if (currentAirframe != airframe) {
@@ -827,21 +829,27 @@ int main() {
                 soundQueue = {}; // Clear the sound queue
             }
 
-            if (AoA > AOA_Warning_Start && AoA < Stall_warning) {
-                float volume = calculateVolume(AoA, AOA_Warning_Start, AOA_Warning_End, AOA_warning_start_volume, AOA_warning_end_volume);
-                std::cout << "Calculated AOA warning volume: " << volume << " for AoA: " << AoA << std::endl;
-                {
-                    std::lock_guard<std::mutex> lock(queueMutex);
-                    soundQueue.emplace("audio/" + AOA_warning_audio_file, volume, AOA_warning_balance, AOA_warning_device_index); // Use relative path
+            // Only process warnings when aircraft is moving (IAS >= 10)
+            if (IAS >= 10.0f) {
+                if (AoA > AOA_Warning_Start && AoA < Stall_warning) {
+                    float volume = calculateVolume(AoA, AOA_Warning_Start, AOA_Warning_End, 
+                                                AOA_warning_start_volume, AOA_warning_end_volume);
+                    std::cout << "Calculated AOA warning volume: " << volume << " for AoA: " << AoA << std::endl;
+                    {
+                        std::lock_guard<std::mutex> lock(queueMutex);
+                        soundQueue.emplace("audio/" + AOA_warning_audio_file, volume, 
+                                         AOA_warning_balance, AOA_warning_device_index);
+                    }
+                    queueCondition.notify_one();
+                } else if (AoA >= Stall_warning) {
+                    std::cout << "Using stall warning volume: " << Stall_warning_volume << " for AoA: " << AoA << std::endl;
+                    {
+                        std::lock_guard<std::mutex> lock(queueMutex);
+                        soundQueue.emplace("audio/" + Stall_warning_audio_file, Stall_warning_volume, 
+                                         Stall_warning_balance, Stall_warning_device_index);
+                    }
+                    queueCondition.notify_one();
                 }
-                queueCondition.notify_one();
-            } else if (AoA >= Stall_warning) {
-                std::cout << "Using stall warning volume: " << Stall_warning_volume << " for AoA: " << AoA << std::endl;
-                {
-                    std::lock_guard<std::mutex> lock(queueMutex);  // Fixed syntax here
-                    soundQueue.emplace("audio/" + Stall_warning_audio_file, Stall_warning_volume, Stall_warning_balance, Stall_warning_device_index); // Use relative path
-                }
-                queueCondition.notify_one();
             }
         }
     }
